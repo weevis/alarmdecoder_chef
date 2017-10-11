@@ -1,0 +1,119 @@
+packages = ['gunicorn', 'sendmail', 'libffi-dev', 'python-dev', 'build-essential', 'libssl-dev', 'curl', 'libpcre3-dev', 'libpcre++-dev', 'zlib1g-dev', 'libcurl4-openssl-dev', 'minicom', 'telnet', 'python2.7', 'autoconf', 'automake', 'avahi-daemon', 'screen', 'locales', 'dosfstools', 'vim', 'python2.7-dev', 'sqlite3', 'git']
+
+packages.each do |package|
+  apt_package package do
+    action :install
+  end
+end
+
+remote_file '/home/pi/get-pip.py' do
+  source 'https://bootstrap.pypa.io/get-pip.py'
+  owner 'pi'
+  group 'dialout'
+  mode '0755'
+  action :create
+end
+
+execute 'install_pip' do
+  command '/usr/bin/python /home/pi/get-pip.py'
+end
+
+nginx_version = '1.13.6'
+
+remote_file '/home/pi/nginx-#{nginx_version}.tar.gz' do
+  source 'http://nginx.org/download/nginx-#{nginx-version}.tar.gz'
+  owner 'pi'
+  group 'dialout'
+  mode '0755'
+  action :create
+end
+
+execute 'unpack_nginx' do
+  command '/bin/tar zxvf /home/pi/nginx-#{nginx_version}.tar.gz'
+end
+
+nginx_directory = '/home/pi/nginx-#{nginx_version}'
+
+execute 'configure_nginx' do
+  cwd '#{nginx_directory}'
+  command './configure'
+end
+
+execute 'make_nginx' do
+  cwd '#{nginx_directory}'
+  command 'make'
+end
+
+execute 'install_nginx' do
+  cwd '#{nginx_directory}'
+  command 'make install'
+end
+
+execute 'install_setuptools' do
+  command "pip install setuptools"
+end
+
+execute 'clone_library_repo' do
+  cwd '/opt'
+  command "git clone https://github.com/nutechsoftware/alarmdecoder.git"
+end
+
+execute 'install_alarmdecoder_library' do
+  cwd '/opt/alarmdecoder'
+  command "python setup.py install"
+end
+
+execute 'clone_webapp_repo' do
+  cwd '/opt'
+  command "git clone http://github.com/nutechsoftware/alarmdecoder-webapp.git"
+end
+
+execute 'install_webapp_packages' do
+  cwd '/opt/alarmdecoder-webapp'
+  command "pip install -r requirements.txt"
+end
+
+file "/etc/nginx/sites-available/alarmdecoder" do
+  owner 'pi'
+  group 'dialout'
+  mode '0755'
+  content ::File.open("/opt/alarmdecoder-webapp/contrib/nginx/alarmdecoder").read
+  action :create
+end
+
+execute 'link_site' do
+  command "ln -s /etc/nginx/sites-available/alarmdecoder /etc/nginx/sites-enabled/"
+end
+
+execute 'remove_default_site' do
+  command "rm /etc/nginx/sites-enabled/default"
+end
+
+file "/etc/gunicorn.d/alarmdecoder" do
+  owner 'pi'
+  group 'dialout'
+  mode '0755'
+  content ::File.open("/opt/alarmdecoder-webapp/contrib/gunicorn.d/alarmdecoder").read
+  action :create
+end
+
+execute 'webapp_permissions' do
+  command "chown -R pi:dialout /opt/alarmdecoder-webapp"
+end
+
+execute 'prepare_ssl' do
+  command "openssl req -x509 -nodes -sha256 -days 365 -newkey rsa:4096 -keyout /etc/nginx/ssl/alarmdecoder.key -out /etc/nginx/ssl/alarmdecoder.crt"
+end
+
+execute 'prepare_database' do
+  cwd '/opt/alarmdecoder-webapp'
+  command "python manage.py initdb"
+end
+
+service "nginx" do
+  action :restart
+end
+
+service "gunicorn" do
+  action :restart
+end
